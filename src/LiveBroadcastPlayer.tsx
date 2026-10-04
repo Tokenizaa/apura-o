@@ -10,24 +10,86 @@ import {
   Move,
   Pin,
   PictureInPicture,
-  RefreshCw
+  RefreshCw,
+  Plus,
+  Link as LinkIcon,
+  Trash2,
+  Check,
+  Edit2
 } from 'lucide-react';
 
-interface LiveBroadcastPlayerProps {
+interface StreamChannel {
+  id: string;
+  videoId: string;
+  title: string;
+  channelName: string;
+  isCustom?: boolean;
+}
+
+const DEFAULT_STREAMS: StreamChannel[] = [
+  {
+    id: 'radio-caxias',
+    videoId: 'AsQb4t_7E9w',
+    title: 'RÁDIO CAXIAS NAS ELEIÇÕES 2026',
+    channelName: 'Caxias Play / Rádio Caxias',
+  },
+  {
+    id: 'tse-oficial',
+    videoId: 'live',
+    title: 'TSE Brasil • Transmissão Oficial',
+    channelName: 'Tribunal Superior Eleitoral',
+  },
+];
+
+const STORAGE_KEY_CUSTOM_STREAMS = 'monitor_cb_custom_streams';
+const STORAGE_KEY_ACTIVE_STREAM = 'monitor_cb_active_stream_id';
+
+export interface LiveBroadcastPlayerProps {
   videoId?: string;
-  channelName?: string;
   streamTitle?: string;
+  channelName?: string;
 }
 
 export const LiveBroadcastPlayer: React.FC<LiveBroadcastPlayerProps> = ({
-  videoId = 'AsQb4t_7E9w',
-  channelName = 'Caxias Play / Rádio Caxias',
-  streamTitle = 'RÁDIO CAXIAS NAS ELEIÇÕES 2026',
+  videoId,
+  streamTitle,
+  channelName,
 }) => {
-  // Modes: 'docked' (in-page) | 'floating' (overlay sobreposição) | 'minimized' (compact floating bar) | 'hidden'
+  // Modes: 'docked' (in-page) | 'floating' (overlay sobreposição) | 'minimized' (compact floating bar)
   const [displayMode, setDisplayMode] = useState<'docked' | 'floating' | 'minimized'>('docked');
-  const [isOverlayPinned, setIsOverlayPinned] = useState(false);
   const [overlaySize, setOverlaySize] = useState<'small' | 'medium' | 'large'>('medium');
+
+  // Channels state
+  const [channels, setChannels] = useState<StreamChannel[]>(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_CUSTOM_STREAMS);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {
+      // fallback
+    }
+    return DEFAULT_STREAMS;
+  });
+
+  const [activeChannelId, setActiveChannelId] = useState<string>(() => {
+    try {
+      const savedId = localStorage.getItem(STORAGE_KEY_ACTIVE_STREAM);
+      if (savedId) return savedId;
+    } catch {
+      // fallback
+    }
+    return 'radio-caxias';
+  });
+
+  // Toggle input field for custom embed links
+  const [showInputPanel, setShowInputPanel] = useState(false);
+  const [newUrlInput, setNewUrlInput] = useState('');
+  const [newTitleInput, setNewTitleInput] = useState('');
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Floating coordinates
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null);
@@ -39,7 +101,95 @@ export const LiveBroadcastPlayer: React.FC<LiveBroadcastPlayerProps> = ({
     initY: 0,
   });
 
-  const embedUrl = `https://www.youtube.com/embed/${videoId}?autoplay=1&enablejsapi=1&origin=${encodeURIComponent(
+  // Current active stream object
+  const activeStream =
+    channels.find((c) => c.id === activeChannelId) ||
+    channels[0] ||
+    DEFAULT_STREAMS[0];
+
+  // Save changes to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_CUSTOM_STREAMS, JSON.stringify(channels));
+    } catch {
+      // ignore
+    }
+  }, [channels]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY_ACTIVE_STREAM, activeChannelId);
+    } catch {
+      // ignore
+    }
+  }, [activeChannelId]);
+
+  // Extract YouTube ID from full URL, embed code or raw ID
+  const parseYouTubeId = (input: string): string | null => {
+    const trimmed = input.trim();
+    if (!trimmed) return null;
+
+    // Check if raw 11 character ID (letters, numbers, dashes, underscores)
+    if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) {
+      return trimmed;
+    }
+
+    // Check if iframe snippet pasted
+    const iframeMatch = trimmed.match(/src=["'](?:https?:)?\/\/www\.youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/i);
+    if (iframeMatch && iframeMatch[1]) {
+      return iframeMatch[1];
+    }
+
+    // Standard YouTube URL formats:
+    // https://www.youtube.com/watch?v=AsQb4t_7E9w
+    // https://youtu.be/AsQb4t_7E9w
+    // https://www.youtube.com/live/AsQb4t_7E9w
+    // https://www.youtube.com/embed/AsQb4t_7E9w
+    const regExp = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?|live)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/;
+    const match = trimmed.match(regExp);
+
+    if (match && match[1]) {
+      return match[1];
+    }
+
+    return null;
+  };
+
+  const handleAddCustomStream = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage(null);
+
+    const parsedId = parseYouTubeId(newUrlInput);
+    if (!parsedId) {
+      setErrorMessage('Link inválido. Cole uma URL do YouTube (ex: https://youtube.com/watch?v=... ou https://youtu.be/...)');
+      return;
+    }
+
+    const title = newTitleInput.trim() || `Transmissão (${parsedId.slice(0, 6)}...)`;
+    const newStream: StreamChannel = {
+      id: `custom-${Date.now()}`,
+      videoId: parsedId,
+      title: title,
+      channelName: 'Link Customizado',
+      isCustom: true,
+    };
+
+    setChannels((prev) => [newStream, ...prev]);
+    setActiveChannelId(newStream.id);
+    setNewUrlInput('');
+    setNewTitleInput('');
+    setShowInputPanel(false);
+  };
+
+  const handleDeleteCustomStream = (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setChannels((prev) => prev.filter((c) => c.id !== id));
+    if (activeChannelId === id) {
+      setActiveChannelId('radio-caxias');
+    }
+  };
+
+  const embedUrl = `https://www.youtube.com/embed/${activeStream.videoId}?autoplay=1&enablejsapi=1&origin=${encodeURIComponent(
     typeof window !== 'undefined' ? window.location.origin : ''
   )}`;
 
@@ -79,8 +229,8 @@ export const LiveBroadcastPlayer: React.FC<LiveBroadcastPlayerProps> = ({
     if ('documentPictureInPicture' in window) {
       try {
         const pipWindow = await (window as any).documentPictureInPicture.requestWindow({
-          width: 400,
-          height: 250,
+          width: 440,
+          height: 270,
         });
 
         // Copy styles
@@ -136,24 +286,42 @@ export const LiveBroadcastPlayer: React.FC<LiveBroadcastPlayerProps> = ({
     <>
       {/* 1. DOCKED MODE (Inline card in the page) */}
       {displayMode === 'docked' && (
-        <section aria-label="Transmissão ao vivo" className="mb-6 bg-neutral-900 text-white rounded-lg overflow-hidden border border-neutral-800 shadow-md">
+        <section
+          aria-label="Transmissão ao vivo"
+          className="mb-6 bg-neutral-900 text-white rounded-lg overflow-hidden border border-neutral-800 shadow-md"
+        >
           {/* Header Bar */}
           <div className="flex flex-wrap items-center justify-between px-4 py-2.5 bg-neutral-950 border-b border-neutral-800 gap-2">
-            <div className="flex items-center gap-2.5">
+            <div className="flex items-center gap-2.5 flex-wrap">
               <span className="flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] font-extrabold uppercase tracking-wider bg-red-600 text-white">
                 <span className="w-2 h-2 rounded-full bg-white animate-ping"></span>
                 AO VIVO
               </span>
               <span className="text-xs font-bold text-neutral-100 flex items-center gap-1.5 truncate max-w-xs sm:max-w-md">
                 <Radio className="w-3.5 h-3.5 text-red-500 shrink-0" />
-                <span className="truncate">{streamTitle}</span>
+                <span className="truncate">{activeStream.title}</span>
               </span>
               <span className="hidden sm:inline-block text-[11px] text-neutral-400">
-                &bull; {channelName}
+                &bull; {activeStream.channelName}
               </span>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              {/* Button: Inserir Outro Link / Embed */}
+              <button
+                type="button"
+                onClick={() => setShowInputPanel(!showInputPanel)}
+                className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded border transition-colors cursor-pointer ${
+                  showInputPanel
+                    ? 'bg-red-600 text-white border-red-500'
+                    : 'bg-neutral-800 hover:bg-neutral-700 text-neutral-200 border-neutral-700'
+                }`}
+                title="Inserir outro link de vídeo ou transmissão do YouTube"
+              >
+                <LinkIcon className="w-3.5 h-3.5" />
+                <span>{showInputPanel ? 'Ocultar Campo' : 'Outro Link / Embed'}</span>
+              </button>
+
               {/* Button: Float Overlay (Sobreposição de Tela) */}
               <button
                 type="button"
@@ -162,7 +330,7 @@ export const LiveBroadcastPlayer: React.FC<LiveBroadcastPlayerProps> = ({
                 title="Ativar modo sobreposição de tela (o vídeo flutua sobre a página enquanto você navega)"
               >
                 <PictureInPicture className="w-3.5 h-3.5 text-amber-400" />
-                <span>Sobreposição de Tela (PiP)</span>
+                <span>Sobreposição (PiP)</span>
               </button>
 
               {/* Native PiP if supported */}
@@ -179,7 +347,7 @@ export const LiveBroadcastPlayer: React.FC<LiveBroadcastPlayerProps> = ({
               )}
 
               <a
-                href={`https://www.youtube.com/watch?v=${videoId}`}
+                href={`https://www.youtube.com/watch?v=${activeStream.videoId}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="p-1 text-neutral-400 hover:text-white transition-colors"
@@ -190,11 +358,100 @@ export const LiveBroadcastPlayer: React.FC<LiveBroadcastPlayerProps> = ({
             </div>
           </div>
 
+          {/* INPUT PANEL: Inserir Outros Links de Embed / Canais do YouTube */}
+          {showInputPanel && (
+            <div className="bg-neutral-950 p-4 border-b border-neutral-800 animate-fade-in">
+              <form onSubmit={handleAddCustomStream} className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <h4 className="text-xs font-bold text-neutral-200 uppercase tracking-wider flex items-center gap-1.5">
+                    <LinkIcon className="w-3.5 h-3.5 text-red-500" />
+                    Inserir Novo Link ou Embed do YouTube
+                  </h4>
+                  <button
+                    type="button"
+                    onClick={() => setShowInputPanel(false)}
+                    className="text-neutral-400 hover:text-white text-xs"
+                  >
+                    Fechar
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                  <div className="sm:col-span-7">
+                    <input
+                      type="text"
+                      value={newUrlInput}
+                      onChange={(e) => {
+                        setNewUrlInput(e.target.value);
+                        if (errorMessage) setErrorMessage(null);
+                      }}
+                      placeholder="Cole o link ou código de embed (ex: https://www.youtube.com/watch?v=... ou AsQb4t_7E9w)"
+                      className="w-full bg-neutral-900 border border-neutral-700 focus:border-red-500 rounded px-3 py-2 text-xs text-white placeholder-neutral-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-3">
+                    <input
+                      type="text"
+                      value={newTitleInput}
+                      onChange={(e) => setNewTitleInput(e.target.value)}
+                      placeholder="Nome do Canal ou Título (opcional)"
+                      className="w-full bg-neutral-900 border border-neutral-700 focus:border-red-500 rounded px-3 py-2 text-xs text-white placeholder-neutral-500 focus:outline-none"
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <button
+                      type="submit"
+                      className="w-full bg-red-600 hover:bg-red-700 text-white text-xs font-bold px-3 py-2 rounded transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Carregar Embed</span>
+                    </button>
+                  </div>
+                </div>
+
+                {errorMessage && (
+                  <p className="text-[11px] text-red-400 font-medium">{errorMessage}</p>
+                )}
+
+                {/* Quick Presets / Recent Channels list */}
+                <div className="pt-2 border-t border-neutral-850 flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px] text-neutral-400 font-medium">Canais salvos:</span>
+                  {channels.map((chan) => (
+                    <div
+                      key={chan.id}
+                      onClick={() => setActiveChannelId(chan.id)}
+                      className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded cursor-pointer transition-colors ${
+                        activeChannelId === chan.id
+                          ? 'bg-red-600 text-white'
+                          : 'bg-neutral-850 text-neutral-300 hover:bg-neutral-800'
+                      }`}
+                    >
+                      <span className="truncate max-w-[130px]">{chan.title}</span>
+                      {chan.isCustom && (
+                        <button
+                          type="button"
+                          onClick={(e) => handleDeleteCustomStream(chan.id, e)}
+                          className="hover:text-red-300 ml-0.5 p-0.5"
+                          title="Excluir este canal"
+                        >
+                          <X className="w-2.5 h-2.5" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </form>
+            </div>
+          )}
+
           {/* Video Iframe Container */}
           <div className="relative w-full aspect-video bg-black">
             <iframe
+              key={activeStream.videoId}
               src={embedUrl}
-              title={streamTitle}
+              title={activeStream.title}
               className="absolute inset-0 w-full h-full border-0"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
               referrerPolicy="strict-origin-when-cross-origin"
@@ -202,12 +459,23 @@ export const LiveBroadcastPlayer: React.FC<LiveBroadcastPlayerProps> = ({
             ></iframe>
           </div>
 
-          <div className="px-4 py-2 bg-neutral-950 flex flex-wrap items-center justify-between text-[11px] text-neutral-400 border-t border-neutral-800/80">
-            <span>
-              Transmissão contínua da apuração em Caxias do Sul e Rio Grande do Sul.
-            </span>
-            <span className="text-amber-400 font-medium">
-              Dica: clique em &quot;Sobreposição de Tela&quot; para manter o vídeo visível ao rolar a página.
+          {/* Channel selector footer bar */}
+          <div className="px-4 py-2 bg-neutral-950 flex flex-wrap items-center justify-between text-[11px] text-neutral-400 border-t border-neutral-800/80 gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-semibold text-neutral-300">Transmitindo:</span>
+              <span className="text-white font-medium">{activeStream.title}</span>
+              <button
+                type="button"
+                onClick={() => setShowInputPanel(true)}
+                className="text-amber-400 hover:underline flex items-center gap-1 cursor-pointer font-medium"
+              >
+                <Edit2 className="w-3 h-3" />
+                <span>Trocar por outro link</span>
+              </button>
+            </div>
+
+            <span className="text-neutral-400">
+              Clique em <strong className="text-amber-400">&quot;Sobreposição (PiP)&quot;</strong> para manter o vídeo fixo na tela.
             </span>
           </div>
         </section>
@@ -235,7 +503,7 @@ export const LiveBroadcastPlayer: React.FC<LiveBroadcastPlayerProps> = ({
               <span className="w-2 h-2 rounded-full bg-red-600 animate-ping shrink-0"></span>
               <Move className="w-3 h-3 text-neutral-400 shrink-0" />
               <span className="text-[11px] font-bold truncate">
-                {streamTitle}
+                {activeStream.title}
               </span>
             </div>
 
@@ -292,8 +560,9 @@ export const LiveBroadcastPlayer: React.FC<LiveBroadcastPlayerProps> = ({
           {/* Floating Video Iframe */}
           <div className="w-full h-[calc(100%-28px)] bg-black">
             <iframe
+              key={activeStream.videoId}
               src={embedUrl}
-              title={streamTitle}
+              title={activeStream.title}
               className="w-full h-full border-0"
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
               referrerPolicy="strict-origin-when-cross-origin"
@@ -311,7 +580,7 @@ export const LiveBroadcastPlayer: React.FC<LiveBroadcastPlayerProps> = ({
             AO VIVO
           </span>
           <span className="text-xs font-medium text-neutral-200 truncate max-w-[180px]">
-            {streamTitle}
+            {activeStream.title}
           </span>
           <button
             type="button"
