@@ -1,0 +1,6 @@
+{
+  "name": "Monitor Carlos Burigo",
+  "description": "Ferramenta simples para monitoramento de notícias e menções públicas relacionadas a Carlos Burigo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
