@@ -31,8 +31,13 @@ import {
   TrendingUp,
   ShieldCheck,
   Info,
-  History
+  History,
+  Tv,
+  Radio
 } from 'lucide-react';
+import { PWAInstallButton } from './PWAInstallButton';
+import { LiveBroadcastPlayer } from './LiveBroadcastPlayer';
+import { OfflineIndicator } from './OfflineIndicator';
 
 interface CandidateVote {
   porcentagem: string;
@@ -712,7 +717,9 @@ export default function App() {
             </div>
 
             {/* Quick Actions */}
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              <PWAInstallButton />
+
               <button
                 type="button"
                 onClick={() => {
@@ -720,7 +727,7 @@ export default function App() {
                   fetchFeed(true);
                 }}
                 disabled={isScraping}
-                className="inline-flex items-center gap-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs sm:text-sm font-semibold px-3.5 py-2 rounded-md shadow-xs transition-colors cursor-pointer"
+                className="inline-flex items-center gap-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-xs sm:text-sm font-semibold px-3 py-2 rounded-md shadow-xs transition-colors cursor-pointer"
                 title="Raspar G1 agora"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${isScraping ? 'animate-spin' : ''}`} />
@@ -740,6 +747,13 @@ export default function App() {
             </div>
           </div>
         </header>
+
+        {/* LIVE BROADCAST PLAYER (RÁDIO CAXIAS NAS ELEIÇÕES 2026 - AsQb4t_7E9w) COM SOBREPOSIÇÃO DE TELA */}
+        <LiveBroadcastPlayer
+          videoId="AsQb4t_7E9w"
+          streamTitle="RÁDIO CAXIAS NAS ELEIÇÕES 2026"
+          channelName="Caxias Play / Rádio Caxias"
+        />
 
         {/* SECTION: Automated Cron & Resilient Browser Notifications Bar */}
         <section aria-labelledby="notification-cron-heading" className="mb-6">
@@ -1605,6 +1619,8 @@ export default function App() {
           </span>
         </div>
       </footer>
+      {/* Offline Indicator */}
+      <OfflineIndicator />
     </div>
   );
 }
