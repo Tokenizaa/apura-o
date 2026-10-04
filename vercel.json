@@ -1,0 +1,10 @@
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/api/feed", "destination": "/api/feed" },
+    { "source": "/api/apuracao-rs", "destination": "/api/apuracao-rs" },
+    { "source": "/api/scrape-now", "destination": "/api/scrape-now" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
+}

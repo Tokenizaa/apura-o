@@ -389,12 +389,108 @@ export default function App() {
         if (triggerScrapeNow) {
           showToast('Scrape do G1 concluído com sucesso!');
         }
+      } else {
+        // Fallback for static hosting (e.g. Vercel static)
+        await fetchApuracaoDirectFallback(triggerScrapeNow);
       }
     } catch (err) {
-      console.error('Failed to fetch G1 apuração:', err);
-      showToast('Erro ao atualizar dados do G1.');
+      console.warn('Backend endpoint unavailable, falling back to direct G1 feed:', err);
+      await fetchApuracaoDirectFallback(triggerScrapeNow);
     } finally {
       setIsScraping(false);
+    }
+  };
+
+  // Direct G1 Fallback for static environments
+  const fetchApuracaoDirectFallback = async (triggerScrapeNow = false) => {
+    try {
+      const [resExec, resDep] = await Promise.all([
+        fetch('https://s.glbimg.com/jo/el/2026/apuracao/1-turno/rs/executivo.json').then((r) => r.json()),
+        fetch('https://s.glbimg.com/jo/el/2026/apuracao/1-turno/rs/deputado-estadual.json').then((r) => r.json()),
+      ]);
+
+      const abrangencia = resExec?.abrangencia || resDep?.abrangencia || {};
+      const andamentoStr = abrangencia.andamento || '0,00';
+      const candsGov: Candidate[] = (resExec?.candidatos || []).map((c: any) => ({
+        nome: c.nome,
+        numero: c.numero,
+        partido: c.partido,
+        coligacao: c.coligacao,
+        posicao: c.posicao || c.classificacao,
+        votos: c.votos || { porcentagem: '0,00', quantidade: 0 },
+        eleito: c.eleito || 'N',
+        foto: c.foto,
+      }));
+
+      const allDep: Candidate[] = resDep?.candidatos || [];
+      const burigo = allDep.find(
+        (c) => c.numero === '15140' || c.nome.toLowerCase().includes('carlos búrigo')
+      );
+
+      const hasVotes = (burigo?.votos?.quantidade || 0) > 0;
+      const carlosBurigoObj = {
+        nome: burigo?.nome || 'Carlos Búrigo',
+        numero: burigo?.numero || '15140',
+        partido: burigo?.partido || 'MDB',
+        cargo: 'Deputado Estadual (RS)',
+        posicao: burigo?.posicao || 73,
+        posicaoTipo: hasVotes ? ('ranking_votos' as const) : ('ordem_alfabetica' as const),
+        posicaoExplicacao: hasVotes
+          ? `${burigo?.posicao}º mais votado na apuração parcial`
+          : '73º na ordem alfabética oficial do TSE (aguardando início da contagem de votos)',
+        votos: burigo?.votos || { porcentagem: '0,00', quantidade: 0 },
+        eleito: burigo?.eleito || 'N',
+        destinacaoDosVotos: burigo?.destinacaoDosVotos || 'Válido',
+        statusDescricao: burigo?.eleito === 'S' ? 'Eleito por QP' : 'Em apuração',
+      };
+
+      const fallbackData: ApuracaoData = {
+        sourceUrl: 'https://g1.globo.com/politica/eleicoes/2026/apuracao/rio-grande-do-sul.ghtml',
+        scrapedAt: new Date().toISOString(),
+        pageMeta: {
+          generatedAt: '04-10-2026 13:55:13',
+          ssrState: 'voting-day',
+          phase: 'durante',
+          stateName: 'Rio Grande do Sul',
+          uf: 'RS',
+          year: '2026',
+        },
+        urnas: {
+          andamento: andamentoStr,
+          percentual: parseFloat(andamentoStr.replace(',', '.')) || 0,
+          secoesTotalizadas: Number(abrangencia.secoesTotalizadas) || 0,
+          secoes: Number(abrangencia.secoes) || 29840,
+          eleitores: Number(abrangencia.eleitores) || 8526233,
+          eleitoradoApurado: Number(abrangencia.eleitoradoApurado) || 0,
+          totalizacaoFinal: Boolean(abrangencia.totalizacaoFinal),
+          aguardandoApuracao: Boolean(abrangencia.aguardandoApuracao),
+          votos: abrangencia.votos,
+        },
+        carlosBurigo: carlosBurigoObj,
+        governador: candsGov,
+        senador: [],
+        deputadosEstaduaisDestaques: allDep.slice(0, 15),
+        deputadosFederaisDestaques: [],
+        totalCandidatosEstaduais: allDep.length,
+        totalCandidatosFederais: 458,
+        hasChangesSinceLastCheck: false,
+      };
+
+      setApuracao(fallbackData);
+      setLastScrapeTime(new Date());
+
+      if (notifyEveryCycle && triggerScrapeNow) {
+        triggerBrowserNotification(
+          `⏱️ Apuração G1 RS (Ciclo Concluído)`,
+          `Urnas em ${andamentoStr}% às ${new Date().toLocaleTimeString('pt-BR')}. Carlos Búrigo: ${carlosBurigoObj.votos.quantidade} votos. Situação: Em apuração.`,
+          'https://g1.globo.com/politica/eleicoes/2026/apuracao/rio-grande-do-sul.ghtml'
+        );
+      }
+      if (triggerScrapeNow) {
+        showToast('Apuração atualizada via feed G1!');
+      }
+    } catch {
+      showToast('Erro ao carregar dados do G1.');
     }
   };
 
