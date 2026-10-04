@@ -503,7 +503,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/scrape-now', async (req: Request, res: Response) => {
+  app.all('/api/scrape-now', async (req: Request, res: Response) => {
     try {
       const data = await scrapeG1ApuracaoRS();
       res.json({
@@ -528,7 +528,7 @@ async function startServer() {
     });
   });
 
-  app.post('/api/check-now', async (req: Request, res: Response) => {
+  app.all('/api/check-now', async (req: Request, res: Response) => {
     const result = await runMonitoringCycle();
     res.json({
       status: 'ok',

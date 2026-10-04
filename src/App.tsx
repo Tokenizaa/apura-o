@@ -356,9 +356,11 @@ export default function App() {
   const fetchApuracaoData = async (triggerScrapeNow = false) => {
     setIsScraping(true);
     try {
-      const endpoint = triggerScrapeNow ? '/api/scrape-now' : '/api/apuracao-rs';
-      const method = triggerScrapeNow ? 'POST' : 'GET';
-      const res = await fetch(endpoint, { method });
+      // Use GET with timestamp cache-buster to prevent 405 on edge/static hosting
+      const endpoint = triggerScrapeNow
+        ? `/api/scrape-now?t=${Date.now()}`
+        : `/api/apuracao-rs?t=${Date.now()}`;
+      const res = await fetch(endpoint, { method: 'GET' });
 
       if (res.ok) {
         const data = await res.json();
@@ -406,12 +408,32 @@ export default function App() {
     }
   };
 
-  // Direct G1 Fallback for static environments
+  // Direct G1 Fallback for static environments with CORS proxy fallback
   const fetchApuracaoDirectFallback = async (triggerScrapeNow = false) => {
     try {
+      const fetchJsonWithFallback = async (url: string) => {
+        try {
+          const res = await fetch(url);
+          if (res.ok) return await res.json();
+        } catch {
+          // Direct fetch blocked by CORS, try proxy
+        }
+        try {
+          const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+          const pRes = await fetch(proxyUrl);
+          if (pRes.ok) {
+            const data = await pRes.json();
+            if (data.contents) return JSON.parse(data.contents);
+          }
+        } catch {
+          // ignore
+        }
+        return null;
+      };
+
       const [resExec, resDep] = await Promise.all([
-        fetch('https://s.glbimg.com/jo/el/2026/apuracao/1-turno/rs/executivo.json').then((r) => r.json()),
-        fetch('https://s.glbimg.com/jo/el/2026/apuracao/1-turno/rs/deputado-estadual.json').then((r) => r.json()),
+        fetchJsonWithFallback('https://s.glbimg.com/jo/el/2026/apuracao/1-turno/rs/executivo.json'),
+        fetchJsonWithFallback('https://s.glbimg.com/jo/el/2026/apuracao/1-turno/rs/deputado-estadual.json'),
       ]);
 
       const abrangencia = resExec?.abrangencia || resDep?.abrangencia || {};
@@ -502,12 +524,13 @@ export default function App() {
   // Fetch news feed and synchronization
   const fetchFeed = async (triggerImmediate = false) => {
     try {
-      const endpoint = triggerImmediate ? '/api/check-now' : '/api/feed';
-      const method = triggerImmediate ? 'POST' : 'GET';
+      // Use GET with query string to avoid 405 Method Not Allowed on edge/static hosting
+      const endpoint = triggerImmediate
+        ? `/api/check-now?t=${Date.now()}`
+        : `/api/feed?t=${Date.now()}`;
       const res = await fetch(endpoint, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        ...(triggerImmediate ? { body: JSON.stringify({ queries }) } : {}),
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
       });
 
       if (res.ok) {
