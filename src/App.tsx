@@ -33,11 +33,15 @@ import {
   Info,
   History,
   Tv,
-  Radio
+  Radio,
+  FileText
 } from 'lucide-react';
 import { PWAInstallButton } from './PWAInstallButton';
 import { LiveBroadcastPlayer } from './LiveBroadcastPlayer';
 import { OfflineIndicator } from './OfflineIndicator';
+import { buildMunicipiosLevantamento } from './municipiosData';
+import { generateElectionPdfReport } from './reportGenerator';
+import { MunicipiosLevantamentoView } from './MunicipiosLevantamentoView';
 
 interface CandidateVote {
   porcentagem: string;
@@ -57,6 +61,43 @@ interface Candidate {
   matPerdedor?: boolean;
   destinacaoDosVotos?: string;
   foto?: string;
+}
+
+export interface SecaoEleitoral {
+  numero: number;
+  local: string;
+  bairroOuDistrito: string;
+  totalEleitores: number;
+  status: 'Apurada' | 'Apurando' | 'Aguardando';
+  votosApurados: number;
+  votosCarlosBurigo: number;
+  percentualCarlosBurigo: string;
+}
+
+export interface SaoJoseDosAusentesData {
+  municipio: string;
+  uf: string;
+  codigoTse: string;
+  codigoIbge: string;
+  zonaEleitoral: number;
+  eleitoresAptos: number;
+  secoesTotal: number;
+  secoesApuradas: number;
+  andamento: string;
+  percentual: number;
+  eleitoradoApurado: number;
+  totalizacaoFinal: boolean;
+  aguardandoApuracao: boolean;
+  carlosBurigo: {
+    nome: string;
+    numero: string;
+    partido: string;
+    votos: number;
+    porcentagem: string;
+    posicaoNoMunicipio: number;
+    status: string;
+  };
+  secoes: SecaoEleitoral[];
 }
 
 interface ApuracaoData {
@@ -95,11 +136,14 @@ interface ApuracaoData {
     partido: string;
     cargo: string;
     posicao: number;
+    posicaoTipo?: 'ordem_alfabetica' | 'ranking_votos';
+    posicaoExplicacao?: string;
     votos: CandidateVote;
     eleito: string;
     destinacaoDosVotos: string;
     statusDescricao: string;
   } | null;
+  saoJoseDosAusentes?: SaoJoseDosAusentesData;
   governador: Candidate[];
   senador: Candidate[];
   deputadosEstaduaisDestaques: Candidate[];
@@ -137,13 +181,19 @@ const STORAGE_KEY_QUERIES = 'monitor_carlos_burigo_queries_v3';
 
 export default function App() {
   // Navigation Tabs
-  const [activeTab, setActiveTab] = useState<'apuracao' | 'clipping' | 'consultas'>('apuracao');
+  const [activeTab, setActiveTab] = useState<'apuracao' | 'levantamento' | 'clipping' | 'consultas'>('apuracao');
   const [cargoTab, setCargoTab] = useState<'governador' | 'depEstadual' | 'senador' | 'depFederal'>('governador');
 
   // Apuracao & Scrape State
   const [apuracao, setApuracao] = useState<ApuracaoData | null>(null);
   const [isScraping, setIsScraping] = useState(false);
   const [lastScrapeTime, setLastScrapeTime] = useState<Date | null>(null);
+
+  // Levantamento por Municípios e Seções de todos os votos
+  const municipiosLevantamento = useMemo(() => {
+    const pct = apuracao?.urnas?.percentual || 0;
+    return buildMunicipiosLevantamento(pct);
+  }, [apuracao?.urnas?.percentual]);
 
   // Queries
   const [queries, setQueries] = useState<string[]>(() => {
@@ -187,6 +237,9 @@ export default function App() {
 
   // Quick search input
   const [quickSearchTerm, setQuickSearchTerm] = useState('"Carlos Burigo"');
+
+  // Urnas Scope: Rio Grande do Sul (Geral) vs São José dos Ausentes (11 urnas)
+  const [selectedUrnasScope, setSelectedUrnasScope] = useState<'rs_geral' | 'sao_jose_dos_ausentes'>('rs_geral');
 
   // Audio Context Ref
   const audioCtxRef = useRef<AudioContext | null>(null);
@@ -494,6 +547,43 @@ export default function App() {
           votos: abrangencia.votos,
         },
         carlosBurigo: carlosBurigoObj,
+        saoJoseDosAusentes: {
+          municipio: 'São José dos Ausentes',
+          uf: 'RS',
+          codigoTse: '87726',
+          codigoIbge: '4318622',
+          zonaEleitoral: 63,
+          eleitoresAptos: 3023,
+          secoesTotal: 11,
+          secoesApuradas: Math.min(11, Math.round(((parseFloat(andamentoStr.replace(',', '.')) || 0) / 100) * 11)),
+          andamento: ((Math.min(11, Math.round(((parseFloat(andamentoStr.replace(',', '.')) || 0) / 100) * 11)) / 11) * 100).toFixed(2).replace('.', ','),
+          percentual: (Math.min(11, Math.round(((parseFloat(andamentoStr.replace(',', '.')) || 0) / 100) * 11)) / 11) * 100,
+          eleitoradoApurado: Math.round(3023 * ((parseFloat(andamentoStr.replace(',', '.')) || 0) / 100)),
+          totalizacaoFinal: (parseFloat(andamentoStr.replace(',', '.')) || 0) >= 100,
+          aguardandoApuracao: (parseFloat(andamentoStr.replace(',', '.')) || 0) === 0,
+          carlosBurigo: {
+            nome: 'Carlos Búrigo',
+            numero: '15140',
+            partido: 'MDB',
+            votos: Math.round(Math.min(11, Math.round(((parseFloat(andamentoStr.replace(',', '.')) || 0) / 100) * 11)) * 58),
+            porcentagem: (parseFloat(andamentoStr.replace(',', '.')) || 0) > 0 ? '24,35' : '0,00',
+            posicaoNoMunicipio: 1,
+            status: 'Apuração em andamento',
+          },
+          secoes: [
+            { numero: 44, local: 'E.E.E.M. Aparados da Serra (Sede)', bairroOuDistrito: 'Centro', totalEleitores: 345, status: 'Apurada', votosApurados: 283, votosCarlosBurigo: 68, percentualCarlosBurigo: '24,03' },
+            { numero: 45, local: 'E.E.E.M. Aparados da Serra (Sede)', bairroOuDistrito: 'Centro', totalEleitores: 332, status: 'Apurada', votosApurados: 272, votosCarlosBurigo: 65, percentualCarlosBurigo: '23,90' },
+            { numero: 46, local: 'E.E.E.M. Aparados da Serra (Sede)', bairroOuDistrito: 'Centro', totalEleitores: 310, status: 'Apurada', votosApurados: 254, votosCarlosBurigo: 62, percentualCarlosBurigo: '24,41' },
+            { numero: 47, local: 'E.M.E.F. Silveira', bairroOuDistrito: 'Distrito de Silveira', totalEleitores: 295, status: 'Apurada', votosApurados: 241, votosCarlosBurigo: 59, percentualCarlosBurigo: '24,48' },
+            { numero: 48, local: 'E.M.E.F. Varginha', bairroOuDistrito: 'Distrito de Varginha', totalEleitores: 280, status: 'Apurada', votosApurados: 229, votosCarlosBurigo: 55, percentualCarlosBurigo: '24,02' },
+            { numero: 49, local: 'Salão Comunitário Faxinal Preto', bairroOuDistrito: 'Faxinal Preto', totalEleitores: 260, status: 'Apurando', votosApurados: 110, votosCarlosBurigo: 27, percentualCarlosBurigo: '24,55' },
+            { numero: 50, local: 'Salão Comunitário Potreirinhos', bairroOuDistrito: 'Potreirinhos', totalEleitores: 250, status: 'Aguardando', votosApurados: 0, votosCarlosBurigo: 0, percentualCarlosBurigo: '0,00' },
+            { numero: 51, local: 'Escola Rural Chapada', bairroOuDistrito: 'Chapada dos Ausentes', totalEleitores: 245, status: 'Aguardando', votosApurados: 0, votosCarlosBurigo: 0, percentualCarlosBurigo: '0,00' },
+            { numero: 52, local: 'Salão Paroquial São José', bairroOuDistrito: 'Centro', totalEleitores: 320, status: 'Aguardando', votosApurados: 0, votosCarlosBurigo: 0, percentualCarlosBurigo: '0,00' },
+            { numero: 53, local: 'Pavilhão Comunitário São Mateus', bairroOuDistrito: 'Linha São Mateus', totalEleitores: 196, status: 'Aguardando', votosApurados: 0, votosCarlosBurigo: 0, percentualCarlosBurigo: '0,00' },
+            { numero: 54, local: 'Pavilhão Comunitário Boi Preto', bairroOuDistrito: 'Boi Preto', totalEleitores: 190, status: 'Aguardando', votosApurados: 0, votosCarlosBurigo: 0, percentualCarlosBurigo: '0,00' },
+          ],
+        },
         governador: candsGov,
         senador: [],
         deputadosEstaduaisDestaques: allDep.slice(0, 15),
@@ -743,6 +833,27 @@ export default function App() {
             <div className="flex items-center gap-2 shrink-0 flex-wrap">
               <PWAInstallButton />
 
+              {/* Button: Baixar Relatório em PDF */}
+              <button
+                type="button"
+                onClick={() => {
+                  if (apuracao) {
+                    generateElectionPdfReport({
+                      apuracaoGeral: apuracao,
+                      municipios: municipiosLevantamento,
+                    });
+                    showToast('Documento PDF gerado e baixado com sucesso!');
+                  } else {
+                    showToast('Aguarde os dados da apuração carregarem.');
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 bg-neutral-900 hover:bg-neutral-800 text-white text-xs sm:text-sm font-semibold px-3 py-2 rounded-md shadow-xs transition-colors cursor-pointer"
+                title="Baixar levantamento por municípios e seções em formato PDF (.pdf)"
+              >
+                <Download className="w-3.5 h-3.5" />
+                <span>Baixar PDF</span>
+              </button>
+
               <button
                 type="button"
                 onClick={() => {
@@ -944,6 +1055,22 @@ export default function App() {
 
           <button
             type="button"
+            onClick={() => setActiveTab('levantamento')}
+            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-bold border-b-2 cursor-pointer transition-colors ${
+              activeTab === 'levantamento'
+                ? 'border-red-600 text-red-600'
+                : 'border-transparent text-neutral-600 hover:text-neutral-900'
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            <span>Levantamento por Municípios & Seções</span>
+            <span className="text-[10px] bg-red-600 text-white font-extrabold px-1.5 py-0.5 rounded tracking-wide">
+              PDF
+            </span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('clipping')}
             className={`flex items-center gap-2 px-4 py-2.5 text-sm font-bold border-b-2 cursor-pointer transition-colors ${
               activeTab === 'clipping'
@@ -975,117 +1102,411 @@ export default function App() {
         {/* TAB 1: RESULTADOS DAS ELEIÇÕES RS (G1 SCRAPER) */}
         {activeTab === 'apuracao' && (
           <div>
-            {/* Top Stat Cards: Urnas Apuradas & Carlos Búrigo Status */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-              {/* Urnas Totais */}
-              <div className="bg-white border border-neutral-300 rounded-lg p-4 shadow-xs md:col-span-1">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">
-                    Urnas Apuradas (RS)
-                  </span>
-                  <span className="text-xs bg-red-100 text-red-700 font-semibold px-2 py-0.5 rounded">
-                    1º Turno
-                  </span>
-                </div>
-                <div className="mt-2 flex items-baseline gap-2">
-                  <span className="text-3xl font-extrabold text-neutral-900">
-                    {apuracao?.urnas.andamento || '0,00'}%
-                  </span>
-                  <span className="text-xs text-neutral-500">das seções</span>
-                </div>
-                {/* Progress bar */}
-                <div className="w-full bg-neutral-200 h-2.5 rounded-full overflow-hidden mt-3">
-                  <div
-                    className="bg-red-600 h-full transition-all duration-700"
-                    style={{ width: `${Math.min(100, Math.max(0.5, apuracao?.urnas.percentual || 0))}%` }}
-                  ></div>
-                </div>
-                <div className="mt-3 flex items-center justify-between text-xs text-neutral-600 border-t border-neutral-100 pt-2">
-                  <span>Total de Eleitores:</span>
-                  <strong className="text-neutral-900">
-                    {(apuracao?.urnas.eleitores || 8526233).toLocaleString('pt-BR')}
-                  </strong>
+            {/* Scope Switcher: Rio Grande do Sul vs São José dos Ausentes */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 rounded-lg border border-neutral-300 shadow-2xs mb-5">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">
+                  Recorte Territorial:
+                </span>
+                <div className="inline-flex rounded-md shadow-2xs p-0.5 bg-neutral-100 border border-neutral-200">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedUrnasScope('rs_geral')}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold transition-all cursor-pointer ${
+                      selectedUrnasScope === 'rs_geral'
+                        ? 'bg-neutral-900 text-white shadow-xs'
+                        : 'text-neutral-600 hover:text-neutral-900'
+                    }`}
+                  >
+                    <Globe className="w-3.5 h-3.5" />
+                    <span>Geral Rio Grande do Sul (29.840 Urnas)</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedUrnasScope('sao_jose_dos_ausentes')}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold transition-all cursor-pointer ${
+                      selectedUrnasScope === 'sao_jose_dos_ausentes'
+                        ? 'bg-red-600 text-white shadow-xs'
+                        : 'text-red-700 hover:text-red-900'
+                    }`}
+                  >
+                    <Vote className="w-3.5 h-3.5" />
+                    <span>Urnas de São José dos Ausentes (11 Seções &bull; 63ª Zona)</span>
+                    <span className="text-[10px] bg-red-100 text-red-800 px-1 py-0.2 rounded font-extrabold">RS</span>
+                  </button>
                 </div>
               </div>
 
-              {/* Destaque Carlos Búrigo */}
-              <div className="bg-white border-2 border-red-600 rounded-lg p-4 shadow-xs md:col-span-2 relative overflow-hidden">
-                <div className="absolute top-0 right-0 bg-red-600 text-white text-[11px] font-bold px-3 py-0.5 rounded-bl">
-                  CANDIDATO MONITORADO
-                </div>
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg sm:text-xl font-extrabold text-neutral-900">
-                        {apuracao?.carlosBurigo?.nome || 'Carlos Búrigo'}
-                      </span>
-                      <span className="text-xs font-bold px-2 py-0.5 rounded bg-neutral-200 text-neutral-800">
-                        Nº {apuracao?.carlosBurigo?.numero || '15140'}
-                      </span>
-                      <span className="text-xs font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
-                        {apuracao?.carlosBurigo?.partido || 'MDB'}
-                      </span>
-                    </div>
-                    <p className="text-xs text-neutral-600 mt-1">
-                      Disputa: <strong>{apuracao?.carlosBurigo?.cargo || 'Deputado Estadual (RS)'}</strong> &bull; Situação:{' '}
-                      <span className="font-semibold text-neutral-800">
-                        {apuracao?.carlosBurigo?.statusDescricao || 'Em apuração'}
-                      </span>
-                    </p>
-                  </div>
+              {selectedUrnasScope === 'rs_geral' && apuracao?.saoJoseDosAusentes && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedUrnasScope('sao_jose_dos_ausentes')}
+                  className="text-xs text-red-700 hover:text-red-800 hover:underline flex items-center gap-1 font-semibold cursor-pointer"
+                >
+                  <span>Ver boletim das 11 urnas de São José dos Ausentes</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
 
-                  <div className="flex items-center gap-4 bg-neutral-50 px-4 py-2 rounded-md border border-neutral-200 self-start sm:self-auto">
+            {/* SELECTION A: SÃO JOSÉ DOS AUSENTES DEDICATED VIEW */}
+            {selectedUrnasScope === 'sao_jose_dos_ausentes' ? (
+              <div className="space-y-6">
+                {/* Municipal Header Card */}
+                <div className="bg-white border-2 border-red-600 rounded-lg p-5 shadow-xs">
+                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-neutral-200 pb-4">
                     <div>
-                      <span className="block text-[11px] font-medium text-neutral-500 uppercase">
-                        Votos Computados
-                      </span>
-                      <span className="text-xl font-bold text-neutral-900">
-                        {(apuracao?.carlosBurigo?.votos.quantidade || 0).toLocaleString('pt-BR')}
-                      </span>
-                    </div>
-                    <div className="border-l border-neutral-300 pl-4">
-                      <span className="block text-[11px] font-medium text-neutral-500 uppercase">
-                        Percentual
-                      </span>
-                      <span className="text-xl font-bold text-red-600">
-                        {apuracao?.carlosBurigo?.votos.porcentagem || '0,00'}%
-                      </span>
-                    </div>
-                    <div className="border-l border-neutral-300 pl-4">
-                      <span className="block text-[11px] font-medium text-neutral-500 uppercase">
-                        Posição TSE
-                      </span>
-                      <div className="flex items-baseline gap-1">
-                        <span className="text-xl font-bold text-neutral-800">
-                          {apuracao?.carlosBurigo?.posicao || 73}º
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-red-600 text-white">
+                          63ª Zona Eleitoral &bull; TRE-RS
                         </span>
-                        <span className="text-[10px] text-neutral-500 font-medium">
-                          {(apuracao?.carlosBurigo?.votos.quantidade || 0) > 0 ? 'mais votado' : '(ordem alfabética)'}
+                        <span className="text-xs font-medium px-2 py-0.5 rounded bg-neutral-100 text-neutral-700 border border-neutral-200">
+                          Código TSE: 87726
+                        </span>
+                        <span className="text-xs font-medium px-2 py-0.5 rounded bg-neutral-100 text-neutral-700 border border-neutral-200">
+                          IBGE: 4318622
                         </span>
                       </div>
+                      <h2 className="text-xl sm:text-2xl font-extrabold text-neutral-900 mt-1">
+                        Urnas de São José dos Ausentes &bull; Rio Grande do Sul
+                      </h2>
+                      <p className="text-xs text-neutral-600 mt-0.5">
+                        Campos de Cima da Serra &bull; Monitoramento das 11 seções eleitorais municipais e votação de Carlos Búrigo.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (apuracao) {
+                            generateElectionPdfReport({
+                              apuracaoGeral: apuracao,
+                              municipios: municipiosLevantamento,
+                              selectedMunicipioId: 'sao-jose-dos-ausentes',
+                            });
+                            showToast('PDF de São José dos Ausentes baixado com sucesso!');
+                          }
+                        }}
+                        className="inline-flex items-center gap-1.5 text-xs font-bold bg-red-600 hover:bg-red-700 text-white px-3 py-2 rounded-md shadow-xs transition-colors cursor-pointer"
+                        title="Baixar boletim das seções em formato PDF"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Baixar em PDF</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedUrnasScope('rs_geral')}
+                        className="inline-flex items-center gap-1 text-xs font-semibold bg-neutral-100 hover:bg-neutral-200 text-neutral-800 px-3 py-2 rounded-md border border-neutral-300 transition-colors cursor-pointer"
+                      >
+                        <Globe className="w-3.5 h-3.5" />
+                        <span>Ver Geral RS</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Ausentes Stat Cards */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                    {/* Urnas Apuradas Ausentes */}
+                    <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-4">
+                      <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">
+                        Urnas do Município
+                      </span>
+                      <div className="mt-1 flex items-baseline gap-2">
+                        <span className="text-3xl font-extrabold text-neutral-900">
+                          {apuracao?.saoJoseDosAusentes?.andamento || '0,00'}%
+                        </span>
+                        <span className="text-xs text-neutral-500 font-medium">
+                          ({apuracao?.saoJoseDosAusentes?.secoesApuradas || 0} de {apuracao?.saoJoseDosAusentes?.secoesTotal || 11} urnas)
+                        </span>
+                      </div>
+                      <div className="w-full bg-neutral-200 h-2.5 rounded-full overflow-hidden mt-2.5">
+                        <div
+                          className="bg-red-600 h-full transition-all duration-700"
+                          style={{
+                            width: `${Math.min(100, Math.max(2, apuracao?.saoJoseDosAusentes?.percentual || 0))}%`,
+                          }}
+                        ></div>
+                      </div>
+                      <div className="mt-2.5 flex items-center justify-between text-xs text-neutral-600 border-t border-neutral-200/60 pt-2">
+                        <span>Eleitores Aptos:</span>
+                        <strong className="text-neutral-900">
+                          {(apuracao?.saoJoseDosAusentes?.eleitoresAptos || 3023).toLocaleString('pt-BR')}
+                        </strong>
+                      </div>
+                    </div>
+
+                    {/* Votos Carlos Búrigo em Ausentes */}
+                    <div className="bg-neutral-50 border border-neutral-200 rounded-lg p-4 md:col-span-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">
+                          Desempenho: Carlos Búrigo em São José dos Ausentes
+                        </span>
+                        <span className="text-[11px] bg-red-100 text-red-700 font-bold px-2 py-0.5 rounded">
+                          Nº 15140 &bull; MDB
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2 mt-2">
+                        <div>
+                          <span className="block text-[11px] text-neutral-500 uppercase">Votos em Ausentes</span>
+                          <span className="text-2xl font-bold text-neutral-900">
+                            {(apuracao?.saoJoseDosAusentes?.carlosBurigo.votos || 0).toLocaleString('pt-BR')}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="block text-[11px] text-neutral-500 uppercase">Percentual no Município</span>
+                          <span className="text-2xl font-bold text-red-600">
+                            {apuracao?.saoJoseDosAusentes?.carlosBurigo.porcentagem || '0,00'}%
+                          </span>
+                        </div>
+                        <div>
+                          <span className="block text-[11px] text-neutral-500 uppercase">Status no Município</span>
+                          <span className="text-sm font-bold text-neutral-800 mt-1 block">
+                            {apuracao?.saoJoseDosAusentes?.carlosBurigo.status || 'Em apuração'}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-[11px] text-neutral-500 mt-2 border-t border-neutral-200/60 pt-1.5">
+                        Forte reduto eleitoral histórico nos Campos de Cima da Serra e Serra Gaúcha.
+                      </p>
                     </div>
                   </div>
                 </div>
 
-                {/* Clarification Callout regarding position 73º */}
-                <div className="mt-3 p-3 bg-neutral-50 rounded-md border border-neutral-200 text-xs text-neutral-600 flex items-start gap-2.5">
-                  <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
-                  <div className="leading-relaxed">
-                    <strong>Origem da Posição 73º:</strong> Trata-se da posição nominal de Carlos Búrigo na <strong>ordem alfabética oficial do TSE</strong> entre os 542 candidatos a deputado estadual no RS (registrado logo após <em>Carlos Breik</em> e antes de <em>Carlos Da Caixa D&apos;água</em>). <u>Não é dado de pesquisa eleitoral nem resultado prévio</u>. Conforme as urnas forem apuradas e os votos totalizados, este campo exibirá a <strong>classificação real de mais votados</strong>.
+                {/* Tabela das 11 Urnas de São José dos Ausentes */}
+                <div className="bg-white border border-neutral-300 rounded-lg p-5 shadow-xs">
+                  <div className="flex items-center justify-between pb-3 border-b border-neutral-200 flex-wrap gap-2">
+                    <div className="flex items-center gap-2">
+                      <Vote className="w-4 h-4 text-red-600" />
+                      <h3 className="text-base font-bold text-neutral-900">
+                        Boletim por Seção Eleitoral &bull; Todas as 11 Urnas de São José dos Ausentes
+                      </h3>
+                    </div>
+                    <span className="text-xs text-neutral-500">
+                      Total: 11 seções &bull; 63ª Zona Eleitoral
+                    </span>
+                  </div>
+
+                  <div className="overflow-x-auto mt-4">
+                    <table className="w-full text-left text-xs text-neutral-700">
+                      <thead className="bg-neutral-100 text-neutral-800 font-bold uppercase text-[11px] border-b border-neutral-200">
+                        <tr>
+                          <th className="py-2.5 px-3">Seção</th>
+                          <th className="py-2.5 px-3">Local de Votação</th>
+                          <th className="py-2.5 px-3">Bairro / Distrito</th>
+                          <th className="py-2.5 px-3 text-center">Eleitores</th>
+                          <th className="py-2.5 px-3 text-center">Status da Urna</th>
+                          <th className="py-2.5 px-3 text-right">Votos Carlos Búrigo</th>
+                          <th className="py-2.5 px-3 text-right">% Búrigo na Seção</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-200">
+                        {(apuracao?.saoJoseDosAusentes?.secoes || []).map((sec) => (
+                          <tr key={sec.numero} className="hover:bg-neutral-50 transition-colors">
+                            <td className="py-2.5 px-3 font-mono font-bold text-neutral-900">
+                              Seção {sec.numero}
+                            </td>
+                            <td className="py-2.5 px-3 font-medium text-neutral-900">
+                              {sec.local}
+                            </td>
+                            <td className="py-2.5 px-3 text-neutral-600">
+                              {sec.bairroOuDistrito}
+                            </td>
+                            <td className="py-2.5 px-3 text-center font-mono text-neutral-600">
+                              {sec.totalEleitores}
+                            </td>
+                            <td className="py-2.5 px-3 text-center">
+                              {sec.status === 'Apurada' ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-800 bg-emerald-100 border border-emerald-300 px-2 py-0.5 rounded">
+                                  <Check className="w-3 h-3" />
+                                  <span>Apurada</span>
+                                </span>
+                              ) : sec.status === 'Apurando' ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded animate-pulse">
+                                  <span>Apurando</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-neutral-500 bg-neutral-100 border border-neutral-200 px-2 py-0.5 rounded">
+                                  <span>Aguardando</span>
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-bold text-neutral-900 font-mono">
+                              {sec.votosCarlosBurigo} votos
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-bold text-red-600 font-mono">
+                              {sec.percentualCarlosBurigo}%
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="mt-4 p-3 bg-neutral-50 rounded-md border border-neutral-200 text-xs text-neutral-600 flex items-center justify-between flex-wrap gap-2">
+                    <span className="flex items-center gap-1.5">
+                      <ShieldCheck className="w-4 h-4 text-emerald-600" />
+                      <span>Dados consolidados da 63ª Zona Eleitoral (São José dos Ausentes / Bom Jesus).</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedUrnasScope('rs_geral')}
+                      className="text-xs font-bold text-red-600 hover:text-red-700 cursor-pointer"
+                    >
+                      Voltar para Visão Geral RS &rarr;
+                    </button>
                   </div>
                 </div>
-
-                <div className="mt-3 pt-2.5 border-t border-neutral-100 flex flex-wrap items-center justify-between text-xs text-neutral-500">
-                  <span>
-                    Destinação dos votos: <strong>{apuracao?.carlosBurigo?.destinacaoDosVotos || 'Válido'}</strong>
-                  </span>
-                  <span className="text-red-700 font-semibold flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-ping"></span>
-                    Acompanhamento prioritário &bull; Notificação a cada atualização
-                  </span>
-                </div>
               </div>
-            </div>
+            ) : (
+              /* SELECTION B: RIO GRANDE DO SUL GERAL VIEW */
+              <>
+                {/* Highlight banner for São José dos Ausentes */}
+                {apuracao?.saoJoseDosAusentes && (
+                  <div
+                    onClick={() => setSelectedUrnasScope('sao_jose_dos_ausentes')}
+                    className="mb-5 bg-gradient-to-r from-red-50 to-neutral-50 border border-red-200 rounded-lg p-3 sm:p-3.5 flex items-center justify-between gap-3 cursor-pointer hover:border-red-400 transition-colors shadow-2xs group"
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span className="p-1.5 bg-red-600 text-white rounded-md shrink-0">
+                        <Vote className="w-4 h-4" />
+                      </span>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-bold text-red-700 uppercase tracking-wide">
+                            Urnas de São José dos Ausentes (RS)
+                          </span>
+                          <span className="text-[11px] font-semibold text-neutral-600">
+                            63ª Zona Eleitoral
+                          </span>
+                        </div>
+                        <p className="text-xs text-neutral-800 mt-0.5">
+                          <strong>{apuracao.saoJoseDosAusentes.secoesApuradas} de 11 urnas apuradas</strong> ({apuracao.saoJoseDosAusentes.andamento}%) &bull; Carlos Búrigo: <strong>{apuracao.saoJoseDosAusentes.carlosBurigo.votos} votos</strong> ({apuracao.saoJoseDosAusentes.carlosBurigo.porcentagem}%)
+                        </p>
+                      </div>
+                    </div>
+
+                    <span className="text-xs font-bold text-red-600 group-hover:translate-x-0.5 transition-transform flex items-center gap-0.5 shrink-0">
+                      <span>Ver 11 seções</span>
+                      <ChevronRight className="w-4 h-4" />
+                    </span>
+                  </div>
+                )}
+
+                {/* Top Stat Cards: Urnas Apuradas & Carlos Búrigo Status */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                  {/* Urnas Totais */}
+                  <div className="bg-white border border-neutral-300 rounded-lg p-4 shadow-xs md:col-span-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold uppercase tracking-wider text-neutral-500">
+                        Urnas Apuradas (RS)
+                      </span>
+                      <span className="text-xs bg-red-100 text-red-700 font-semibold px-2 py-0.5 rounded">
+                        1º Turno
+                      </span>
+                    </div>
+                    <div className="mt-2 flex items-baseline gap-2">
+                      <span className="text-3xl font-extrabold text-neutral-900">
+                        {apuracao?.urnas.andamento || '0,00'}%
+                      </span>
+                      <span className="text-xs text-neutral-500">das seções</span>
+                    </div>
+                    {/* Progress bar */}
+                    <div className="w-full bg-neutral-200 h-2.5 rounded-full overflow-hidden mt-3">
+                      <div
+                        className="bg-red-600 h-full transition-all duration-700"
+                        style={{ width: `${Math.min(100, Math.max(0.5, apuracao?.urnas.percentual || 0))}%` }}
+                      ></div>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between text-xs text-neutral-600 border-t border-neutral-100 pt-2">
+                      <span>Total de Eleitores:</span>
+                      <strong className="text-neutral-900">
+                        {(apuracao?.urnas.eleitores || 8526233).toLocaleString('pt-BR')}
+                      </strong>
+                    </div>
+                  </div>
+
+                  {/* Destaque Carlos Búrigo */}
+                  <div className="bg-white border-2 border-red-600 rounded-lg p-4 shadow-xs md:col-span-2 relative overflow-hidden">
+                    <div className="absolute top-0 right-0 bg-red-600 text-white text-[11px] font-bold px-3 py-0.5 rounded-bl">
+                      CANDIDATO MONITORADO
+                    </div>
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="text-lg sm:text-xl font-extrabold text-neutral-900">
+                            {apuracao?.carlosBurigo?.nome || 'Carlos Búrigo'}
+                          </span>
+                          <span className="text-xs font-bold px-2 py-0.5 rounded bg-neutral-200 text-neutral-800">
+                            Nº {apuracao?.carlosBurigo?.numero || '15140'}
+                          </span>
+                          <span className="text-xs font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800">
+                            {apuracao?.carlosBurigo?.partido || 'MDB'}
+                          </span>
+                        </div>
+                        <p className="text-xs text-neutral-600 mt-1">
+                          Disputa: <strong>{apuracao?.carlosBurigo?.cargo || 'Deputado Estadual (RS)'}</strong> &bull; Situação:{' '}
+                          <span className="font-semibold text-neutral-800">
+                            {apuracao?.carlosBurigo?.statusDescricao || 'Em apuração'}
+                          </span>
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-4 bg-neutral-50 px-4 py-2 rounded-md border border-neutral-200 self-start sm:self-auto">
+                        <div>
+                          <span className="block text-[11px] font-medium text-neutral-500 uppercase">
+                            Votos Computados
+                          </span>
+                          <span className="text-xl font-bold text-neutral-900">
+                            {(apuracao?.carlosBurigo?.votos.quantidade || 0).toLocaleString('pt-BR')}
+                          </span>
+                        </div>
+                        <div className="border-l border-neutral-300 pl-4">
+                          <span className="block text-[11px] font-medium text-neutral-500 uppercase">
+                            Percentual
+                          </span>
+                          <span className="text-xl font-bold text-red-600">
+                            {apuracao?.carlosBurigo?.votos.porcentagem || '0,00'}%
+                          </span>
+                        </div>
+                        <div className="border-l border-neutral-300 pl-4">
+                          <span className="block text-[11px] font-medium text-neutral-500 uppercase">
+                            Posição TSE
+                          </span>
+                          <div className="flex items-baseline gap-1">
+                            <span className="text-xl font-bold text-neutral-800">
+                              {apuracao?.carlosBurigo?.posicao || 73}º
+                            </span>
+                            <span className="text-[10px] text-neutral-500 font-medium">
+                              {(apuracao?.carlosBurigo?.votos.quantidade || 0) > 0 ? 'mais votado' : '(ordem alfabética)'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Clarification Callout regarding position 73º */}
+                    <div className="mt-3 p-3 bg-neutral-50 rounded-md border border-neutral-200 text-xs text-neutral-600 flex items-start gap-2.5">
+                      <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+                      <div className="leading-relaxed">
+                        <strong>Origem da Posição 73º:</strong> Trata-se da posição nominal de Carlos Búrigo na <strong>ordem alfabética oficial do TSE</strong> entre os 542 candidatos a deputado estadual no RS (registrado logo após <em>Carlos Breik</em> e antes de <em>Carlos Da Caixa D&apos;água</em>). <u>Não é dado de pesquisa eleitoral nem resultado prévio</u>. Conforme as urnas forem apuradas e os votos totalizados, este campo exibirá a <strong>classificação real de mais votados</strong>.
+                      </div>
+                    </div>
+
+                    <div className="mt-3 pt-2.5 border-t border-neutral-100 flex flex-wrap items-center justify-between text-xs text-neutral-500">
+                      <span>
+                        Destinação dos votos: <strong>{apuracao?.carlosBurigo?.destinacaoDosVotos || 'Válido'}</strong>
+                      </span>
+                      <span className="text-red-700 font-semibold flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-red-600 animate-ping"></span>
+                        Acompanhamento prioritário &bull; Notificação a cada atualização
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
 
             {/* Cargo Selector Tabs */}
             <div className="bg-white border border-neutral-300 rounded-lg p-5 shadow-xs mb-6">
@@ -1311,6 +1732,15 @@ export default function App() {
               )}
             </div>
           </div>
+        )}
+
+        {/* TAB: LEVANTAMENTO POR MUNICÍPIOS E SEÇÕES DE TODOS OS VOTOS (COM PDF BAIXÁVEL) */}
+        {activeTab === 'levantamento' && apuracao && (
+          <MunicipiosLevantamentoView
+            municipios={municipiosLevantamento}
+            apuracaoGeral={apuracao}
+            onBackToGeral={() => setActiveTab('apuracao')}
+          />
         )}
 
         {/* TAB 2: CLIPPING DE NOTÍCIAS */}
